@@ -44,7 +44,6 @@
              target="_blank" rel="noopener noreferrer" style="display:none">4. Go to Google My Maps</a>
           <span id="status" class="pill">Idle</span>
         </div>
-        <input id="fileIn" style="margin-bottom:8px" type="file" accept=".json,application/json" />
         <textarea id="jsonInput" style="margin-bottom:8px" placeholder='Paste DeepState JSON here or use buttons above…'></textarea>
         <div class="hint">Designed specifically for DeepState API data. Supports <code>FeatureCollection</code> with <code>Polygon</code> or <code>MultiPolygon</code> geometries. Feature names are automatically cleaned (removes "/// English /// technical" parts).</div>
       </div>
@@ -60,7 +59,6 @@
 (function(){
   const $ = (id) => document.getElementById(id);
   const jsonEl = $("jsonInput");
-  const fileIn = $("fileIn");
   const btnGen = $("btnGen");
   const btnFetch = $("btnFetch");
   const preview = $("preview");
@@ -130,12 +128,8 @@
     }
   });
 
-  fileIn.addEventListener('change', async (e)=>{
-    const f = e.target.files?.[0];
-    if(!f) return;
-    const txt = await f.text();
-    jsonEl.value = txt;
-    status.textContent = `Loaded file: ${f.name}`;
+  jsonEl.addEventListener('input', async (e)=>{
+    status.textContent = `Pasted JSON geo data.`;
     status.className = 'pill ok';
     btnGen.style.display = 'inline-flex';
   });
