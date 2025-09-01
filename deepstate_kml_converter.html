@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>DeepState → KML (Google My Maps)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { --bg:#0b0c10; --card:#151720; --ink:#e8e9ee; --muted:#9aa0a6; --accent:#6ee7b7; }
+    html,body{height:100%}
+    body{margin:0;font:14px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+    .wrap{max-width:1100px;margin:auto;padding:24px}
+    h1{font-size:20px;margin:0 0 12px}
+    p{color:var(--muted)}
+    .row{display:grid;gap:16px;grid-template-columns: 1fr}
+    @media (min-width: 920px){ .row{grid-template-columns: 1.2fr .8fr} }
+    textarea{width:100%;min-height:340px;border-radius:12px;background:var(--card);color:var(--ink);border:1px solid #24283b;padding:14px}
+    input[type="text"], input[type="file"], select{width:100%;border-radius:10px;background:var(--card);color:var(--ink);border:1px solid #24283b;padding:10px}
+    .card{background:var(--card);border:1px solid #24283b;border-radius:16px;padding:16px}
+    .btn{display:inline-flex;gap:8px;align-items:center;background:#1f2937;border:1px solid #374151;color:#e5e7eb;border-radius:12px;padding:10px 14px;cursor:pointer;text-decoration:none}
+    .btn[disabled]{opacity:.6;cursor:not-allowed}
+    .btn.primary{background:#2b384a;border-color:#3b475a}
+    .btn.fetch{background:#1e3a5f;border-color:#2563eb}
+    .stack{display:flex;gap:10px;flex-wrap:wrap}
+    .out{white-space:pre-wrap;background:#0d1117;color:#e6edf3;border-radius:12px;border:1px solid #30363d;padding:12px;max-height:420px;overflow:auto}
+    .hint{font-size:12px;color:var(--muted)}
+    .pill{display:inline-block;padding:2px 8px;border:1px solid #364152;border-radius:999px;color:#b7c0cc;font-size:12px}
+    .ok{color:#86efac}
+    .bad{color:#fca5a5}
+    .loading{color:#fbbf24}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>DeepState → KML (Google My Maps)</h1>
+    <p>Convert DeepState map data to KML format for use in Google My Maps. Fetch latest data from API, upload a file, or paste JSON manually.</p>
+
+    <div class="row">
+      <div class="card">
+        <div class="stack" style="margin-bottom:8px">
+          <button id="btnFetch" class="btn fetch">1. Fetch Latest from API</button>
+          <button id="btnGen" class="btn primary" style="display:none">2. Generate KML</button>
+          <a id="dl" class="btn" download="map.kml" style="display:none">3. Download KML</a>
+          <a id="googleMyMaps" href="https://www.google.com/maps/d/" class="btn"
+             target="_blank" rel="noopener noreferrer" style="display:none">4. Go to Google My Maps</a>
+          <span id="status" class="pill">Idle</span>
+        </div>
+        <input id="fileIn" style="margin-bottom:8px" type="file" accept=".json,application/json" />
+        <textarea id="jsonInput" style="margin-bottom:8px" placeholder='Paste DeepState JSON here or use buttons above…'></textarea>
+        <div class="hint">Designed specifically for DeepState API data. Supports <code>FeatureCollection</code> with <code>Polygon</code> or <code>MultiPolygon</code> geometries. Feature names are automatically cleaned (removes "/// English /// technical" parts).</div>
+      </div>
+
+      <div class="card">
+        <div style="margin-bottom:8px">Preview (KML):</div>
+        <pre id="preview" class="out" aria-live="polite"></pre>
+      </div>
+    </div>
+  </div>
+
+<script>
+(function(){
+  const $ = (id) => document.getElementById(id);
+  const jsonEl = $("jsonInput");
+  const fileIn = $("fileIn");
+  const btnGen = $("btnGen");
+  const btnFetch = $("btnFetch");
+  const preview = $("preview");
+  const dl = $("dl");
+  const googleMyMaps = $("googleMyMaps");
+  const status = $("status");
+  let docName;
+
+  // Auto-fill document name with today's date
+  function setTodaysDocumentName() {
+    const today = new Date();
+    const day = today.getDate().toString().padStart(2, '0');
+    const month = (today.getMonth() + 1).toString().padStart(2, '0');
+    const year = today.getFullYear();
+    docName = `DeepState ${day}-${month}-${year}`;
+  }
+
+  // Initialize with today's date
+  setTodaysDocumentName();
+
+  // Clean feature names by removing "/// English /// technical" parts
+  function cleanFeatureName(name) {
+    if (!name || typeof name !== 'string') return name;
+    // Remove everything after the first " /// " occurrence
+    const parts = name.split(' /// ');
+    return parts[0].trim();
+  }
+
+  // Fetch latest data from DeepState API
+  btnFetch.addEventListener('click', async () => {
+    const apiUrl = 'https://deepstatemap.live/api/history/last';
+    
+    try {
+      status.textContent = 'Fetching latest data...';
+      status.className = 'pill loading';
+      btnFetch.disabled = true;
+      
+      const response = await fetch(apiUrl);
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      jsonEl.value = JSON.stringify(data, null, 2);
+      
+      status.textContent = `Fetched latest data (ID: ${data.id || 'unknown'})`;
+      status.className = 'pill ok';
+      btnGen.style.display = 'inline-flex';
+      
+      // Update document name if we have datetime info
+      if (data.datetime) {
+        // Try to parse the datetime and update doc name accordingly
+        const dateMatch = data.datetime.match(/(\d{1,2})\.(\d{1,2})/);
+        if (dateMatch) {
+          const [, day, month] = dateMatch;
+          const year = new Date().getFullYear();
+          docName = `DeepState ${day.padStart(2, '0')}-${month.padStart(2, '0')}-${year}`;
+        }
+      }
+      
+    } catch (error) {
+      status.textContent = `Fetch failed: ${error.message}`;
+      status.className = 'pill bad';
+      console.error('API fetch error:', error);
+    } finally {
+      btnFetch.disabled = false;
+    }
+  });
+
+  fileIn.addEventListener('change', async (e)=>{
+    const f = e.target.files?.[0];
+    if(!f) return;
+    const txt = await f.text();
+    jsonEl.value = txt;
+    status.textContent = `Loaded file: ${f.name}`;
+    status.className = 'pill ok';
+    btnGen.style.display = 'inline-flex';
+  });
+
+  dl.addEventListener('click', ()=>{
+      googleMyMaps.style.display = 'inline-flex';
+  })
+
+  btnGen.addEventListener('click', ()=>{
+    try{
+      const raw = jsonEl.value.trim();
+      if(!raw){ throw new Error('JSON is empty'); }
+      const data = JSON.parse(raw);
+
+      // Accept either the root FeatureCollection or data.map.FeatureCollection
+      const fc = (data.type === 'FeatureCollection') ? data
+                : (data.map && data.map.type === 'FeatureCollection') ? data.map
+                : null;
+      if(!fc) throw new Error('Expected a FeatureCollection at root or under \'map\'. Make sure this is DeepState JSON data.');
+
+      const name = (docName || `DeepState ${new Date().toLocaleDateString('en-GB').replace(/\//g, '-')}`).toString();
+      const styles = new Map(); // key → {idBase, kml}
+      const usedStyleIds = new Set();
+
+      const escapeXml = (s)=> String(s)
+        .replaceAll('&','&amp;')
+        .replaceAll('<','&lt;')
+        .replaceAll('>','&gt;');
+
+      const clamp = (n,min,max)=> Math.min(max, Math.max(min, n));
+
+      // Convert CSS hex + alpha (0..1) to KML aabbggrr
+      function cssToKmlColor(hex, alpha){
+        if(!hex) return 'ff000000';
+        const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+        if(!m) return 'ff000000';
+        const rr = m[1].slice(0,2), gg = m[1].slice(2,4), bb = m[1].slice(4,6);
+        const aa = Math.round(clamp(alpha ?? 1, 0, 1) * 255).toString(16).padStart(2,'0');
+        // KML uses aabbggrr
+        return (aa + bb + gg + rr).toLowerCase();
+      }
+
+      function roundId(n){ return Math.round(n*1000); }
+
+      function makePolyStyleId(strokeHex, strokeW, fillHex, fillAlpha){
+        // Try to produce friendly, deterministic IDs similar to My Maps style ids
+        const rrggbb = (strokeHex || '#000000').replace('#','').toLowerCase();
+        const width = roundId(Number(strokeW||1)); // e.g. 1.2 → 1200
+        const alphaPct = Math.round(clamp(fillAlpha ?? 0.3, 0, 1) * 100);
+        return `poly-${rrggbb}-${width}-${alphaPct}-nodesc`;
+      }
+
+      function ensurePolyStyles(props={}){
+        const stroke = props['stroke'] || '#000000';
+        const strokeW = Number(props['stroke-width'] ?? 1.2);
+        const strokeOpacity = Number(props['stroke-opacity'] ?? 1);
+        const fill = props['fill'] || '#000000';
+        const fillOpacity = Number(props['fill-opacity'] ?? 0.3);
+
+        const id = makePolyStyleId(stroke, strokeW, fill, fillOpacity);
+        if(styles.has(id)) return id; // already created
+
+        const lineColorNormal = cssToKmlColor(stroke, clamp(strokeOpacity,0,1));
+        const lineColorHL = cssToKmlColor(stroke, clamp(strokeOpacity,0,1));
+        const polyColorNormal = cssToKmlColor(fill, clamp(fillOpacity,0,1));
+        const polyColorHL = cssToKmlColor(fill, clamp(Math.min(1, fillOpacity + 0.15),0,1));
+
+        const widthNormal = (strokeW || 1.2);
+        const widthHL = +(widthNormal * 1.5).toFixed(2);
+
+        const kml = [
+          `    <Style id="${id}-normal">`,
+          '      <LineStyle>',
+          `        <color>${lineColorNormal}</color>`,
+          `        <width>${widthNormal}</width>`,
+          '      </LineStyle>',
+          '      <PolyStyle>',
+          `        <color>${polyColorNormal}</color>`,
+          '        <fill>1</fill>',
+          '        <outline>1</outline>',
+          '      </PolyStyle>',
+          '      <BalloonStyle>',
+          '        <text><![CDATA[<h3>$[name]</h3>]]></text>',
+          '      </BalloonStyle>',
+          '    </Style>',
+          `    <Style id="${id}-highlight">`,
+          '      <LineStyle>',
+          `        <color>${lineColorHL}</color>`,
+          `        <width>${widthHL}</width>`,
+          '      </LineStyle>',
+          '      <PolyStyle>',
+          `        <color>${polyColorHL}</color>`,
+          '        <fill>1</fill>',
+          '        <outline>1</outline>',
+          '      </PolyStyle>',
+          '      <BalloonStyle>',
+          '        <text><![CDATA[<h3>$[name]</h3>]]></text>',
+          '      </BalloonStyle>',
+          '    </Style>',
+          `    <StyleMap id="${id}">`,
+          '      <Pair>\n        <key>normal</key>',
+          `        <styleUrl>#${id}-normal</styleUrl>\n      </Pair>`,
+          '      <Pair>\n        <key>highlight</key>',
+          `        <styleUrl>#${id}-highlight</styleUrl>\n      </Pair>`,
+          '    </StyleMap>'
+        ].join('\n');
+        styles.set(id, { id, kml });
+        usedStyleIds.add(id);
+        return id;
+      }
+
+      function closeRingIfNeeded(coords){
+        if(!coords || coords.length === 0) return coords;
+        const first = coords[0], last = coords[coords.length-1];
+        if(first[0] !== last[0] || first[1] !== last[1] || (first[2] ?? 0) !== (last[2] ?? 0)){
+          coords = coords.concat([first]);
+        }
+        return coords;
+      }
+
+      function ringToCoordLines(ring){
+        // GeoJSON positions are [lon, lat, (alt)]
+        return closeRingIfNeeded(ring).map(p => {
+          const lon = Number(p[0]);
+          const lat = Number(p[1]);
+          const alt = (p.length > 2 ? Number(p[2]) : 0);
+          return `${lon},${lat},${alt}`;
+        }).join('\n              ');
+      }
+
+      function polygonToKml(geom, props){
+        if(!geom || geom.type !== 'Polygon') return '';
+        const polyStyleId = ensurePolyStyles(props || {});
+        const rawName = props?.name || '';
+        const cleanedName = cleanFeatureName(rawName);
+        const name = escapeXml(cleanedName);
+        const desc = props?.description ? `\n      <description><![CDATA[${props.description}]]></description>` : '';
+        const rings = geom.coordinates || [];
+        const outer = rings[0] || [];
+        const inners = rings.slice(1) || [];
+        const outerStr = ringToCoordLines(outer);
+        const innerStrs = inners.map(r=>`\n        <innerBoundaryIs>\n          <LinearRing>\n            <tessellate>1</tessellate>\n            <coordinates>\n              ${ringToCoordLines(r)}\n            </coordinates>\n          </LinearRing>\n        </innerBoundaryIs>`).join('');
+
+        return [
+          '    <Placemark>',
+          `      <name>${name}</name>`,
+          desc,
+          `      <styleUrl>#${polyStyleId}</styleUrl>`,
+          '      <Polygon>',
+          '        <outerBoundaryIs>',
+          '          <LinearRing>',
+          '            <tessellate>1</tessellate>',
+          '            <coordinates>',
+          `              ${outerStr}`,
+          '            </coordinates>',
+          '          </LinearRing>',
+          '        </outerBoundaryIs>',
+          innerStrs,
+          '      </Polygon>',
+          '    </Placemark>'
+        ].filter(Boolean).join('\n');
+      }
+
+      function multiPolygonToKml(geom, props){
+        // Represent MultiPolygon as a Folder with multiple Placemark polygons under same name
+        const rawName = props?.name || '';
+        const cleanedName = cleanFeatureName(rawName);
+        const name = escapeXml(cleanedName);
+        const desc = props?.description ? `\n      <description><![CDATA[${props.description}]]></description>` : '';
+        const polyStyleId = ensurePolyStyles(props || {});
+        const parts = (geom.coordinates || []).map((poly)=>{
+          const rings = poly || [];
+          const outer = rings[0] || [];
+          const inners = rings.slice(1) || [];
+          const outerStr = ringToCoordLines(outer);
+          const innerStrs = inners.map(r=>`\n        <innerBoundaryIs>\n          <LinearRing>\n            <tessellate>1</tessellate>\n            <coordinates>\n              ${ringToCoordLines(r)}\n            </coordinates>\n          </LinearRing>\n        </innerBoundaryIs>`).join('');
+          return [
+            '    <Placemark>',
+            `      <name>${name}</name>`,
+            desc,
+            `      <styleUrl>#${polyStyleId}</styleUrl>`,
+            '      <Polygon>',
+            '        <outerBoundaryIs>',
+            '          <LinearRing>',
+            '            <tessellate>1</tessellate>',
+            '            <coordinates>',
+            `              ${outerStr}`,
+            '            </coordinates>',
+            '          </LinearRing>',
+            '        </outerBoundaryIs>',
+            innerStrs,
+            '      </Polygon>',
+            '    </Placemark>'
+          ].join('\n');
+        });
+        return parts.join('\n');
+      }
+
+      const placemarks = [];
+      for(const f of (fc.features || [])){
+        if(!f || f.type !== 'Feature') continue;
+        const g = f.geometry || {};
+        const p = f.properties || {};
+        if(g.type === 'Polygon'){
+          placemarks.push(polygonToKml(g,p));
+        } else if(g.type === 'MultiPolygon'){
+          placemarks.push(multiPolygonToKml(g,p));
+        } else {
+          // ignore non-polygon features
+          continue;
+        }
+      }
+
+      const stylesKml = Array.from(styles.values()).map(s=>s.kml).join('\n');
+
+      const kml = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<kml xmlns="http://www.opengis.net/kml/2.2">',
+        '  <Document>',
+        `    <name>${escapeXml(name)}</name>`,
+        stylesKml,
+        placemarks.join('\n'),
+        '  </Document>',
+        '</kml>'
+      ].join('\n');
+
+      preview.textContent = kml;
+
+      const blob = new Blob([kml], {type:'application/vnd.google-earth.kml+xml'});
+      const url = URL.createObjectURL(blob);
+      dl.href = url;
+      const ts = new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+      const base = (data.id ? `deepstate-${data.id}` : 'deepstate-map');
+      dl.download = `${base}-${ts}.kml`;
+      dl.style.display = 'inline-flex';
+      status.textContent = `Generated ${placemarks.length} polygon(s), ${styles.size} style(s)`;
+      status.className = 'pill ok';
+    }catch(err){
+      preview.textContent = String(err?.message || err);
+      status.textContent = 'Error';
+      status.className = 'pill bad';
+      dl.style.display = 'none';
+      console.error(err);
+    }
+  });
+})();
+</script>
+</body>
+</html>
