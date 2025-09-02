@@ -1,2 +1,2 @@
-# DeepState-to-KML
-Allows you to import latest DeepState data into Google Maps
+# DeepState to Google Maps (KML)
+Allows you to import latest DeepState data into Google Maps (My Maps)
